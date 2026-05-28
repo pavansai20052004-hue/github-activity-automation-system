@@ -70,8 +70,9 @@ class AutomationState:
 
         return today >= last_run_date + timedelta(days=frequency_days)
 
-    def record_created_project(self, name: str, url: str, language: str) -> None:
-        self.data["project_creator"]["last_run_date"] = date.today().isoformat()
+    def record_created_project(self, name: str, url: str, language: str, today: date | None = None) -> None:
+        run_date = today or date.today()
+        self.data["project_creator"]["last_run_date"] = run_date.isoformat()
         self.data["project_creator"]["created_projects"].append(
             {
                 "name": name,
@@ -95,4 +96,3 @@ def _merge_state(loaded: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(merged["project_creator"].get("created_projects"), list):
         merged["project_creator"]["created_projects"] = []
     return merged
-

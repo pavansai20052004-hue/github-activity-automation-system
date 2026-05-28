@@ -21,3 +21,6 @@ class GitHubAPIError(AutomationError):
 class RepositorySelectionError(AutomationError):
     """Raised when no repository can be selected."""
 
+
+class LockError(AutomationError):
+    """Raised when another automation run already owns the runtime lock."""

@@ -18,9 +18,17 @@ class SecretSettings:
 
 
 @dataclass(frozen=True)
+class RuntimeSettings:
+    lock_file: Path
+    lock_stale_after_seconds: int
+
+
+@dataclass(frozen=True)
 class GitHubSettings:
     api_base_url: str
     request_timeout_seconds: float
+    max_retries: int
+    retry_backoff_seconds: float
 
 
 @dataclass(frozen=True)
@@ -58,6 +66,7 @@ class AppConfig:
     state_file: Path
     log_file: Path
     log_level: str
+    runtime: RuntimeSettings
     secrets: SecretSettings
     github: GitHubSettings
     daily_commit: DailyCommitSettings
@@ -81,6 +90,7 @@ def load_config(config_path: str | Path = "config.json") -> AppConfig:
         raise ConfigError(f"Invalid JSON in {path}: {exc}") from exc
 
     config_dir = path.parent
+    runtime = _load_runtime(raw, config_dir)
     secrets = _load_secrets(raw)
     github = _load_github(raw)
     daily_commit = _load_daily_commit(raw)
@@ -93,6 +103,7 @@ def load_config(config_path: str | Path = "config.json") -> AppConfig:
         state_file=_resolve_path(config_dir, _require_str(raw, "state_file")),
         log_file=_resolve_path(config_dir, _require_str(raw, "log_file")),
         log_level=_require_str(raw, "log_level").upper(),
+        runtime=runtime,
         secrets=secrets,
         github=github,
         daily_commit=daily_commit,
@@ -105,6 +116,17 @@ def require_env(name: str) -> str:
     if not value:
         raise MissingCredentialError(f"Required environment variable is missing: {name}")
     return value
+
+
+def _load_runtime(raw: dict[str, Any], config_dir: Path) -> RuntimeSettings:
+    section = _require_dict(raw, "runtime")
+    stale_minutes = _require_int(section, "lock_stale_after_minutes")
+    if stale_minutes < 1:
+        raise ConfigError("runtime.lock_stale_after_minutes must be at least 1")
+    return RuntimeSettings(
+        lock_file=_resolve_path(config_dir, _require_str(section, "lock_file")),
+        lock_stale_after_seconds=stale_minutes * 60,
+    )
 
 
 def _load_secrets(raw: dict[str, Any]) -> SecretSettings:
@@ -120,9 +142,17 @@ def _load_github(raw: dict[str, Any]) -> GitHubSettings:
     timeout = _require_number(section, "request_timeout_seconds")
     if timeout <= 0:
         raise ConfigError("github.request_timeout_seconds must be greater than 0")
+    max_retries = _require_int(section, "max_retries")
+    if max_retries < 0:
+        raise ConfigError("github.max_retries must be 0 or greater")
+    retry_backoff = _require_number(section, "retry_backoff_seconds")
+    if retry_backoff < 0:
+        raise ConfigError("github.retry_backoff_seconds must be 0 or greater")
     return GitHubSettings(
         api_base_url=_require_str(section, "api_base_url").rstrip("/"),
         request_timeout_seconds=timeout,
+        max_retries=max_retries,
+        retry_backoff_seconds=retry_backoff,
     )
 
 
@@ -246,4 +276,3 @@ def _require_repo_relative_path(raw: dict[str, Any], key: str) -> str:
     if path.is_absolute() or ".." in path.parts:
         raise ConfigError(f"Config key must be a repository-relative path: {key}")
     return str(path)
-

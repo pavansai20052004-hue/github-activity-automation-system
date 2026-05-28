@@ -2,7 +2,7 @@
 
 A configurable Python automation system that keeps GitHub activity moving in a controlled way. It includes a Daily Commit Agent that appends small activity entries to one owned repository per day, and a Project Creator Agent that creates starter repositories with generated project structure.
 
-The project is built around safety: no hardcoded secrets, a config-driven kill switch, local persistent state for idempotency, structured logs, and clear failure handling around GitHub API calls.
+The project is built around safety: no hardcoded secrets, a config-driven kill switch, local persistent state for idempotency, dry-run support, scheduler lock protection, structured logs, and clear failure handling around GitHub API calls.
 
 ## Prerequisites
 
@@ -63,6 +63,12 @@ Run the Daily Commit Agent:
 python daily_commit.py
 ```
 
+Preview the selected repository and planned commits without writing anything:
+
+```bash
+python daily_commit.py --dry-run
+```
+
 Force a test run even if today already ran:
 
 ```bash
@@ -81,10 +87,23 @@ Choose a language explicitly:
 python project_creator.py --language javascript
 ```
 
+Preview the repository name and starter files without creating anything:
+
+```bash
+python project_creator.py --dry-run --language python
+```
+
 Force project creation even if the interval has not elapsed:
 
 ```bash
 python project_creator.py --force --language python
+```
+
+Validate configuration before scheduling:
+
+```bash
+python validate_config.py
+python validate_config.py --check-env
 ```
 
 ## Configuration Guide
@@ -98,10 +117,14 @@ All meaningful settings live in `config.json`.
 | `state_file` | `state/automation_state.json` | Local JSON state used for idempotency and duplicate prevention. |
 | `log_file` | `logs/automation.log` | Structured JSON log file path. |
 | `log_level` | `INFO` | Logging threshold. |
+| `runtime.lock_file` | `state/automation.lock` | Exclusive lock file that prevents overlapping scheduled runs. |
+| `runtime.lock_stale_after_minutes` | `60` | Age after which an abandoned lock can be replaced. |
 | `secrets.github_token_env` | `GITHUB_TOKEN` | Environment variable that stores the GitHub token. |
 | `secrets.huggingface_token_env` | `HUGGINGFACE_API_TOKEN` | Environment variable for optional idea generation. |
 | `github.api_base_url` | `https://api.github.com` | GitHub REST API v3 base URL. |
 | `github.request_timeout_seconds` | `20` | Timeout for outbound API requests. |
+| `github.max_retries` | `3` | Retry count for transient API, network, and rate-limit failures. |
+| `github.retry_backoff_seconds` | `2` | Base exponential backoff delay between retries. |
 | `daily_commit.target_file` | `.contributions/activity.log` | File updated in the selected repository. |
 | `daily_commit.commit_count.min` | `1` | Minimum commits per successful daily run. |
 | `daily_commit.commit_count.max` | `3` | Maximum commits per successful daily run. |
@@ -135,6 +158,10 @@ touch STOP_AGENTS
 
 Both agents check the kill switch before reading credentials or calling GitHub.
 
+## Scheduler Safety
+
+Both agents use the same exclusive lock file before they read or write state. This prevents two scheduled runs from racing each other and accidentally creating duplicate activity. If a previous process exits unexpectedly, the lock is considered stale after `runtime.lock_stale_after_minutes`.
+
 ## Scheduling
 
 Cron example for Linux or macOS:
@@ -162,6 +189,7 @@ Create a second task for `project_creator.py` if desired.
 .
 |-- daily_commit.py                         # CLI wrapper for the Daily Commit Agent
 |-- project_creator.py                      # CLI wrapper for the Project Creator Agent
+|-- validate_config.py                      # Preflight config and environment validator
 |-- config.json                             # Single source of configurable behavior
 |-- requirements.txt                        # Pinned Python dependencies
 |-- github_activity_automation/
@@ -175,9 +203,13 @@ Create a second task for `project_creator.py` if desired.
 |   |-- project_creator_agent.py            # Project Creator Agent orchestration
 |   |-- project_templates.py                # Python and JavaScript starter files
 |   |-- repository_selector.py              # Random repo selection logic
+|   |-- runtime_lock.py                     # Cross-platform scheduler lock
 |   `-- state.py                            # Local JSON state persistence
 |-- tests/
+|   |-- test_config.py                      # Config validation coverage
+|   |-- test_github_client.py               # Retry behavior coverage
 |   |-- test_repository_selector.py         # Repo avoidance behavior
+|   |-- test_runtime_lock.py                # Lock acquisition and stale-lock coverage
 |   `-- test_state.py                       # Idempotency and interval behavior
 `-- docs/
     `-- architecture.md                     # Design notes and trade-offs
@@ -197,6 +229,9 @@ Create a second task for `project_creator.py` if desired.
 `Project creator says interval has not elapsed`
 : This is expected idempotency behavior. Use `--force` for testing.
 
+`Another automation run is already active`
+: A scheduler overlap was blocked by the runtime lock. Wait for the active run to finish, or remove the lock only if you are sure no process is running.
+
 `Hugging Face request failed`
 : The creator logs the issue and falls back to built-in project ideas automatically.
 
@@ -206,6 +241,8 @@ Create a second task for `project_creator.py` if desired.
 - The GitHub integration uses raw REST calls through `requests` to keep the external surface small and transparent.
 - The Project Creator creates files through the GitHub Contents API so the system does not need shelling out to `git` for generated repositories.
 - The current repository is excluded from Daily Commit Agent selection by default to avoid the automation modifying its own source repo.
+- Dry runs intentionally perform read-only planning but skip writes and state changes, which makes scheduler testing safer.
+- A lock file is used instead of a long-running daemon or database lock because the project is designed for simple cron and Task Scheduler environments.
 
 ## Validation
 
@@ -215,3 +252,4 @@ Run tests with:
 pytest
 ```
 
+The repository also includes a GitHub Actions workflow that runs the same test suite on every push and pull request.

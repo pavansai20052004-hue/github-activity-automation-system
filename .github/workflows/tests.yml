@@ -26,5 +26,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Validate config
+        run: python validate_config.py
+
       - name: Run tests
         run: pytest

@@ -9,8 +9,9 @@ __pycache__/
 .ruff_cache/
 logs/*.log
 state/*.json
+state/*.tmp
+state/*.lock
 STOP_AGENTS
 dist/
 build/
 *.egg-info/
-

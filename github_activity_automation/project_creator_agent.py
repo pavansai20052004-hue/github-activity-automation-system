@@ -12,6 +12,7 @@ from .exceptions import AutomationError, GitHubAPIError
 from .github_client import GitHubClient
 from .logging_setup import configure_logging
 from .project_templates import SUPPORTED_LANGUAGES, build_project_files
+from .runtime_lock import RunLock
 from .state import AutomationState
 
 
@@ -23,6 +24,7 @@ def run_project_creator(
     config_path: str | Path = "config.json",
     force: bool = False,
     language: str | None = None,
+    dry_run: bool = False,
 ) -> int:
     try:
         config = load_config(config_path)
@@ -50,72 +52,103 @@ def run_project_creator(
         return 2
 
     try:
-        state = AutomationState.load(config.state_file)
-        today = date.today()
-        if not state.should_create_project(today, config.project_creator.frequency_days, force=force):
-            logger.info("Project Creator Agent interval has not elapsed", extra={"event": "project_creator.noop"})
-            return 0
-
-        token = require_env(config.secrets.github_token_env)
-        client = GitHubClient(
-            token=token,
-            api_base_url=config.github.api_base_url,
-            timeout_seconds=config.github.request_timeout_seconds,
-            logger=logger,
-        )
-        user = client.get_authenticated_user()
-        owner = str(user["login"])
-
-        idea = get_project_idea(
-            config.project_creator,
-            config.secrets,
-            config.github.request_timeout_seconds,
-            state.created_project_names(),
-            logger,
-        )
-        repository_name = _create_unique_repository(
-            client=client,
-            idea=idea,
-            owner=owner,
-            prefix=config.project_creator.name_prefix,
-            existing_names=state.created_project_names(),
-            private=config.project_creator.visibility == "private",
-            retry_limit=config.project_creator.name_retry_limit,
-            logger=logger,
-        )
-
-        repository_full_name = f"{owner}/{repository_name}"
-        for file in build_project_files(repository_name, idea, selected_language):
-            client.put_file(
-                repository_full_name=repository_full_name,
-                file_path=file.path,
-                message=f"chore: add {file.path}",
-                content=file.content,
+        with RunLock(config.runtime.lock_file, config.runtime.lock_stale_after_seconds, logger):
+            return _run_project_creator_with_lock(
+                config=config,
+                logger=logger,
+                force=force,
+                language=selected_language,
+                dry_run=dry_run,
             )
-            logger.info(
-                "Seeded project file",
-                extra={"event": "project_creator.file_seeded", "repository": repository_full_name, "path": file.path},
-            )
-
-        repository_url = f"https://github.com/{repository_full_name}"
-        state.record_created_project(repository_name, repository_url, selected_language)
-        state.save()
-        logger.info(
-            "Project Creator Agent completed",
-            extra={
-                "event": "project_creator.completed",
-                "repository": repository_full_name,
-                "url": repository_url,
-                "language": selected_language,
-            },
-        )
-        return 0
     except AutomationError as exc:
         logger.error("Project Creator Agent failed", extra={"event": "project_creator.failed", "error": str(exc)})
         return 1
     except Exception:
         logger.exception("Unexpected Project Creator Agent failure", extra={"event": "project_creator.unexpected_failure"})
         return 1
+
+
+def _run_project_creator_with_lock(config, logger, force: bool, language: str, dry_run: bool) -> int:
+    state = AutomationState.load(config.state_file)
+    today = date.today()
+    if not state.should_create_project(today, config.project_creator.frequency_days, force=force):
+        logger.info("Project Creator Agent interval has not elapsed", extra={"event": "project_creator.noop"})
+        return 0
+
+    token = require_env(config.secrets.github_token_env)
+    client = GitHubClient(
+        token=token,
+        api_base_url=config.github.api_base_url,
+        timeout_seconds=config.github.request_timeout_seconds,
+        max_retries=config.github.max_retries,
+        retry_backoff_seconds=config.github.retry_backoff_seconds,
+        logger=logger,
+    )
+    user = client.get_authenticated_user()
+    owner = str(user["login"])
+
+    idea = get_project_idea(
+        config.project_creator,
+        config.secrets,
+        config.github.request_timeout_seconds,
+        state.created_project_names(),
+        logger,
+    )
+
+    if dry_run:
+        repository_name = _avoid_local_duplicates(
+            _slugify(f"{config.project_creator.name_prefix}-{idea.title}"),
+            state.created_project_names(),
+        )
+        files = build_project_files(repository_name, idea, language)
+        logger.info(
+            "Dry run complete; no repository, files, or state changes were written",
+            extra={
+                "event": "project_creator.dry_run",
+                "repository": f"{owner}/{repository_name}",
+                "language": language,
+                "planned_files": [file.path for file in files],
+            },
+        )
+        return 0
+
+    repository_name = _create_unique_repository(
+        client=client,
+        idea=idea,
+        owner=owner,
+        prefix=config.project_creator.name_prefix,
+        existing_names=state.created_project_names(),
+        private=config.project_creator.visibility == "private",
+        retry_limit=config.project_creator.name_retry_limit,
+        logger=logger,
+    )
+
+    repository_full_name = f"{owner}/{repository_name}"
+    for file in build_project_files(repository_name, idea, language):
+        client.put_file(
+            repository_full_name=repository_full_name,
+            file_path=file.path,
+            message=f"chore: add {file.path}",
+            content=file.content,
+        )
+        logger.info(
+            "Seeded project file",
+            extra={"event": "project_creator.file_seeded", "repository": repository_full_name, "path": file.path},
+        )
+
+    repository_url = f"https://github.com/{repository_full_name}"
+    state.record_created_project(repository_name, repository_url, language, today=today)
+    state.save()
+    logger.info(
+        "Project Creator Agent completed",
+        extra={
+            "event": "project_creator.completed",
+            "repository": repository_full_name,
+            "url": repository_url,
+            "language": language,
+        },
+    )
+    return 0
 
 
 def _create_unique_repository(

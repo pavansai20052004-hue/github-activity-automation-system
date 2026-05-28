@@ -4,13 +4,19 @@
   "state_file": "state/automation_state.json",
   "log_file": "logs/automation.log",
   "log_level": "INFO",
+  "runtime": {
+    "lock_file": "state/automation.lock",
+    "lock_stale_after_minutes": 60
+  },
   "secrets": {
     "github_token_env": "GITHUB_TOKEN",
     "huggingface_token_env": "HUGGINGFACE_API_TOKEN"
   },
   "github": {
     "api_base_url": "https://api.github.com",
-    "request_timeout_seconds": 20
+    "request_timeout_seconds": 20,
+    "max_retries": 3,
+    "retry_backoff_seconds": 2
   },
   "daily_commit": {
     "target_file": ".contributions/activity.log",
@@ -46,4 +52,3 @@
     }
   }
 }
-

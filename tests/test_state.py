@@ -25,10 +25,15 @@ def test_project_creator_interval_allows_run_after_frequency(tmp_path):
 def test_state_round_trips_created_projects(tmp_path):
     path = tmp_path / "state.json"
     state = AutomationState(path)
-    state.record_created_project("demo-project", "https://github.com/user/demo-project", "python")
+    state.record_created_project(
+        "demo-project",
+        "https://github.com/user/demo-project",
+        "python",
+        today=date(2026, 5, 28),
+    )
     state.save()
 
     loaded = AutomationState.load(path)
 
     assert "demo-project" in loaded.created_project_names()
-
+    assert loaded.data["project_creator"]["last_run_date"] == "2026-05-28"

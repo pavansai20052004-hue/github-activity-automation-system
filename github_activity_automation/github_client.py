@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -12,6 +13,7 @@ from .exceptions import GitHubAPIError
 
 GITHUB_PAGE_SIZE = 100
 ERROR_BODY_PREVIEW_CHARS = 500
+TRANSIENT_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
 @dataclass(frozen=True)
@@ -21,9 +23,19 @@ class GitHubFile:
 
 
 class GitHubClient:
-    def __init__(self, token: str, api_base_url: str, timeout_seconds: float, logger: logging.Logger) -> None:
+    def __init__(
+        self,
+        token: str,
+        api_base_url: str,
+        timeout_seconds: float,
+        max_retries: int,
+        retry_backoff_seconds: float,
+        logger: logging.Logger,
+    ) -> None:
         self.api_base_url = api_base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
+        self.max_retries = max_retries
+        self.retry_backoff_seconds = retry_backoff_seconds
         self.logger = logger
         self.session = requests.Session()
         self.session.headers.update(
@@ -108,22 +120,55 @@ class GitHubClient:
 
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:
         url = f"{self.api_base_url}{path}"
-        try:
-            response = self.session.request(method, url, timeout=self.timeout_seconds, **kwargs)
-        except requests.RequestException as exc:
-            raise GitHubAPIError(f"GitHub request failed: {exc}") from exc
+        for attempt in range(self.max_retries + 1):
+            try:
+                response = self.session.request(method, url, timeout=self.timeout_seconds, **kwargs)
+            except requests.RequestException as exc:
+                if attempt >= self.max_retries:
+                    raise GitHubAPIError(f"GitHub request failed: {exc}") from exc
+                self._sleep_before_retry(attempt, method, path, str(exc))
+                continue
 
-        if response.status_code >= 400:
-            message = _extract_error_message(response)
-            raise GitHubAPIError(f"GitHub API error {response.status_code}: {message}", response.status_code)
+            if _should_retry(response) and attempt < self.max_retries:
+                self._sleep_before_retry(attempt, method, path, _extract_error_message(response), response)
+                continue
 
-        if response.status_code == 204 or not response.content:
-            return {}
+            if response.status_code >= 400:
+                message = _extract_error_message(response)
+                raise GitHubAPIError(f"GitHub API error {response.status_code}: {message}", response.status_code)
 
-        try:
-            return response.json()
-        except ValueError as exc:
-            raise GitHubAPIError("GitHub returned a non-JSON response") from exc
+            if response.status_code == 204 or not response.content:
+                return {}
+
+            try:
+                return response.json()
+            except ValueError as exc:
+                raise GitHubAPIError("GitHub returned a non-JSON response") from exc
+
+        raise GitHubAPIError("GitHub request failed after retries")
+
+    def _sleep_before_retry(
+        self,
+        attempt: int,
+        method: str,
+        path: str,
+        reason: str,
+        response: requests.Response | None = None,
+    ) -> None:
+        delay = _retry_delay_seconds(self.retry_backoff_seconds, attempt, response)
+        self.logger.warning(
+            "Retrying GitHub request",
+            extra={
+                "event": "github.retry",
+                "method": method,
+                "path": path,
+                "attempt": attempt + 1,
+                "delay_seconds": delay,
+                "reason": reason,
+            },
+        )
+        if delay > 0:
+            time.sleep(delay)
 
 
 def _extract_error_message(response: requests.Response) -> str:
@@ -136,3 +181,28 @@ def _extract_error_message(response: requests.Response) -> str:
     if errors:
         return f"{message}; details={errors}"
     return message
+
+
+def _should_retry(response: requests.Response) -> bool:
+    if response.status_code in TRANSIENT_STATUS_CODES:
+        return True
+    if response.status_code == 403:
+        return "retry-after" in {key.lower() for key in response.headers} or response.headers.get(
+            "X-RateLimit-Remaining"
+        ) == "0"
+    return False
+
+
+def _retry_delay_seconds(
+    retry_backoff_seconds: float,
+    attempt: int,
+    response: requests.Response | None,
+) -> float:
+    if response is not None:
+        retry_after = response.headers.get("Retry-After")
+        if retry_after:
+            try:
+                return max(0.0, float(retry_after))
+            except ValueError:
+                pass
+    return retry_backoff_seconds * (2**attempt)
