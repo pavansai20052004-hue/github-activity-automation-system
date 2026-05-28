@@ -1,0 +1,49 @@
+{
+  "kill_switch": false,
+  "kill_switch_file": "STOP_AGENTS",
+  "state_file": "state/automation_state.json",
+  "log_file": "logs/automation.log",
+  "log_level": "INFO",
+  "secrets": {
+    "github_token_env": "GITHUB_TOKEN",
+    "huggingface_token_env": "HUGGINGFACE_API_TOKEN"
+  },
+  "github": {
+    "api_base_url": "https://api.github.com",
+    "request_timeout_seconds": 20
+  },
+  "daily_commit": {
+    "target_file": ".contributions/activity.log",
+    "commit_count": {
+      "min": 1,
+      "max": 3
+    },
+    "commit_messages": [
+      "chore: record automated activity",
+      "chore: refresh contribution marker",
+      "chore: update activity ledger",
+      "chore: append daily progress note",
+      "chore: maintain repository activity"
+    ],
+    "excluded_repositories": [
+      "github-activity-automation-system"
+    ]
+  },
+  "project_creator": {
+    "frequency_days": 7,
+    "visibility": "public",
+    "name_prefix": "automation-lab",
+    "languages": [
+      "python",
+      "javascript"
+    ],
+    "default_language": "python",
+    "name_retry_limit": 5,
+    "external_idea_provider": {
+      "enabled": true,
+      "provider": "huggingface",
+      "model": "mistralai/Mixtral-8x7B-Instruct-v0.1"
+    }
+  }
+}
+
