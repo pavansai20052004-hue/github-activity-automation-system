@@ -4,6 +4,14 @@ A configurable Python automation system that keeps GitHub activity moving in a c
 
 The project is built around safety: no hardcoded secrets, a config-driven kill switch, local persistent state for idempotency, dry-run support, scheduler lock protection, structured logs, and clear failure handling around GitHub API calls.
 
+## Assessment Materials
+
+- [Engineering approach](docs/APPROACH.md)
+- [Architecture notes](docs/architecture.md)
+- [Demo video script](docs/DEMO_SCRIPT.md)
+- [Demo video](docs/demo/github_activity_automation_demo.mp4)
+- [Submission notes](docs/SUBMISSION_NOTES.md)
+
 ## Prerequisites
 
 - Python 3.10 or newer
@@ -192,6 +200,8 @@ Create a second task for `project_creator.py` if desired.
 |-- validate_config.py                      # Preflight config and environment validator
 |-- config.json                             # Single source of configurable behavior
 |-- requirements.txt                        # Pinned Python dependencies
+|-- scripts/
+|   `-- generate_demo_video.py              # Optional helper used to render the demo MP4
 |-- github_activity_automation/
 |   |-- cli.py                              # Argument parsing entry points
 |   |-- config.py                           # Config loading and validation
@@ -212,7 +222,12 @@ Create a second task for `project_creator.py` if desired.
 |   |-- test_runtime_lock.py                # Lock acquisition and stale-lock coverage
 |   `-- test_state.py                       # Idempotency and interval behavior
 `-- docs/
-    `-- architecture.md                     # Design notes and trade-offs
+    |-- APPROACH.md                         # Detailed assessment approach
+    |-- DEMO_SCRIPT.md                      # Demo video narration and flow
+    |-- SUBMISSION_NOTES.md                 # Email-ready submission note
+    |-- architecture.md                     # Design notes and trade-offs
+    `-- demo/
+        `-- github_activity_automation_demo.mp4
 ```
 
 ## Troubleshooting
