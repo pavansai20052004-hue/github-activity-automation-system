@@ -8,8 +8,8 @@ The project is built around safety: no hardcoded secrets, a config-driven kill s
 
 - [Engineering approach](docs/APPROACH.md)
 - [Architecture notes](docs/architecture.md)
-- [Demo video script](docs/DEMO_SCRIPT.md)
-- [Demo video](docs/demo/github_activity_automation_demo.mp4)
+- [Narrated demo video - voice included](docs/demo/github_activity_automation_narrated_demo.mp4)
+- [Optional demo narration script](docs/DEMO_SCRIPT.md)
 - [Submission notes](docs/SUBMISSION_NOTES.md)
 
 ## Prerequisites
@@ -227,7 +227,7 @@ Create a second task for `project_creator.py` if desired.
     |-- SUBMISSION_NOTES.md                 # Email-ready submission note
     |-- architecture.md                     # Design notes and trade-offs
     `-- demo/
-        `-- github_activity_automation_demo.mp4
+        `-- github_activity_automation_narrated_demo.mp4
 ```
 
 ## Troubleshooting
